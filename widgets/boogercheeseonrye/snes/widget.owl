@@ -331,6 +331,9 @@ custom_viewport_width = "1080"
 custom_viewport_height = "$vp_h"
 custom_viewport_x = "0"
 custom_viewport_y = "$vp_y"
+# Fill the custom viewport (stretch to fill, no letterboxing)
+video_aspect_ratio = "-1.0"
+video_aspect_ratio_auto = "false"
 # Fit the core output to the custom viewport without stretching outside its bounds.
 video_scale_integer = "false"
 video_crop_overscan = "true"

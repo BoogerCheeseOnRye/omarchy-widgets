@@ -325,12 +325,6 @@ pause_nonactive = "false"
 video_fullscreen = "true"
 video_fullscreen_x = "$FS_W"
 video_fullscreen_y = "$FS_H"
-# Custom viewport: pin the game to the overlay's hole (which sits above centre).
-aspect_ratio_index = "23"
-custom_viewport_width = "1080"
-custom_viewport_height = "$vp_h"
-custom_viewport_x = "0"
-custom_viewport_y = "$vp_y"
 # Fill the custom viewport (stretch to fill, no letterboxing)
 video_aspect_ratio = "-1.0"
 video_aspect_ratio_auto = "false"

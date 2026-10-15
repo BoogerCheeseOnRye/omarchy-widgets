@@ -318,6 +318,11 @@ audio_driver = "pulse"
 config_save_on_exit = "false"
 # Keep sound while the game window isn't the focused Android task.
 pause_nonactive = "false"
+# This compositor only offers software GL, so a frame can occasionally run long;
+# rendering it on its own thread keeps the audio callback on schedule, and a
+# little extra audio buffer absorbs the rest.
+video_threaded = "true"
+audio_latency = "128"
 video_fullscreen = "true"
 video_fullscreen_x = "$FS_W"
 video_fullscreen_y = "$FS_H"

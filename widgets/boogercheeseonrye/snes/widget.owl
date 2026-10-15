@@ -6,7 +6,7 @@ widget "snes" {
   order: 5
   size: 4x4
   minSize: 3x3
-  meta { owl: 6; description: "Your SNES games: finds .sfc/.smc ROMs in ~/roms/snes and opens one in RetroArch with the Snes9x core, on a portrait handheld with the game centred and touch buttons below. Send games from your phone"; version: "1.3"; license: "MIT"; category: "fun" }
+  meta { owl: 6; description: "Your SNES games: finds .sfc/.smc ROMs in ~/roms/snes and opens one in RetroArch with the Snes9x core, on a portrait handheld with the game above the touch buttons. Send games from your phone"; version: "1.3"; license: "MIT"; category: "fun" }
 
   requires { pacman: ["retroarch", "libretro-snes9x", "python", "python-pillow", "curl", "util-linux", "xdg-utils", "ttf-dejavu"] }
 
@@ -299,8 +299,13 @@ case "$kind" in
   *)    echo "play: unknown kind: $kind" >&2; exit 2 ;;
 esac
 
-ovl="$(dirname "$here")/assets/handheld/$kind.overlay.cfg"
-[ -f "$ovl" ] || python3 "$here/handheldgen" "$kind" >/dev/null
+ast="$(dirname "$here")/assets/handheld"
+ovl="$ast/$kind.overlay.cfg"
+vp="$ast/$kind.viewport"
+[ -f "$ovl" ] && [ -f "$vp" ] || python3 "$here/handheldgen" "$kind" >/dev/null
+# handheldgen writes the game window's pixel geometry (vp_y, vp_h); the game
+# must sit exactly in the overlay's transparent hole.
+. "$vp"
 
 # The Linux game window is 540x1114 logical pixels (1080x2228 at the
 # compositor's wl_output scale 2; the system bars take the rest of the
@@ -315,10 +320,17 @@ cat > "$cfg" <<EOF
 video_driver = "gl"
 audio_driver = "pulse"
 config_save_on_exit = "false"
+# Keep sound while the game window isn't the focused Android task.
+pause_nonactive = "false"
 video_fullscreen = "true"
 video_fullscreen_x = "$FS_W"
 video_fullscreen_y = "$FS_H"
-aspect_ratio_index = "22"
+# Custom viewport: pin the game to the overlay's hole (which sits above centre).
+aspect_ratio_index = "23"
+custom_viewport_width = "1080"
+custom_viewport_height = "$vp_h"
+custom_viewport_x = "0"
+custom_viewport_y = "$vp_y"
 input_overlay_enable = "true"
 input_overlay = "$ovl"
 input_overlay_opacity = "1.0"
@@ -377,8 +389,8 @@ ACCENT = (232, 88, 88, 255)
 
 # kind -> core aspect (width / height) and label
 LAYOUTS = {
-    "snes": {"aspect": 4 / 3, "label": "SUPER NES", "accent": ACCENT},
-    "gba": {"aspect": 240 / 160, "label": "GAME BOY ADVANCE", "accent": (120, 92, 220, 255)},
+    "snes": {"aspect": 4 / 3, "label": "SUPER NES", "accent": ACCENT, "shift": 50},
+    "gba": {"aspect": 240 / 160, "label": "GAME BOY ADVANCE", "accent": (120, 92, 220, 255), "shift": 50},
 }
 
 
@@ -397,15 +409,21 @@ def controls(kind):
     Positions are pixels of the 1080x2228 overlay image (== the framebuffer).
     '''
     aspect = LAYOUTS[kind]["aspect"]
+    shift = LAYOUTS[kind].get("shift", 0)
     hole_h = int(round(W / aspect))
-    y0 = (H - hole_h) // 2
+    # Raise the game window `shift` px so its bottom clears the L/R row;
+    # tools/play moves the game to match via a custom viewport.
+    y0 = (H - hole_h) // 2 - shift
     y1 = y0 + hole_h
-    mid = (y1 + H) // 2
+    # Buttons keep the position a centred window used to give them, so raising
+    # the window opens a gap instead of dragging the controls up with it.
+    ctl_y1 = (H + hole_h) // 2
+    mid = (ctl_y1 + H) // 2
     c = {
         "hole": (0, y0, W, y1),
         "dpad": (250, mid, 200, 76),  # cx, cy, s, bar
-        "l": (190, y1 + 70, 240, 116),  # cx, cy, w, h
-        "r": (890, y1 + 70, 240, 116),
+        "l": (190, ctl_y1 + 70, 240, 116),  # cx, cy, w, h
+        "r": (890, ctl_y1 + 70, 240, 116),
         "select": (370, H - 86, 250, 104),
         "start": (710, H - 86, 250, 104),
     }
@@ -554,7 +572,12 @@ def write(kind):
         fh.write(f"overlay0_descs = {n}\n")
         for k, v in descs:
             fh.write(f"overlay0_{k} = {v}\n")
-    print(f"{kind}: {png} ({img.size[0]}x{img.size[1]}), hole {hole}, {n} controls")
+    x0, y0, x1, y1 = hole
+    vp = os.path.join(OUT, f"{kind}.viewport")
+    with open(vp, "w") as fh:
+        fh.write("# game-window pixel geometry for tools/play (framebuffer space)\n")
+        fh.write(f"vp_y={y0}\nvp_h={y1 - y0}\n")
+    print(f"{kind}: {png} ({img.size[0]}x{img.size[1]}), hole {hole}, {n} controls, viewport y={y0} h={y1 - y0}")
 
 
 if __name__ == "__main__":
@@ -670,7 +693,7 @@ chmod +x "$d/handheldgen.tmp"; mv -f "$d/handheldgen.tmp" "$d/handheldgen"; fi
         circle(w * 0.72, h * 0.86, min(w, h) * 0.08, fill: cyan)
         circle(w * 0.86, h * 0.78, min(w, h) * 0.08, fill: red)
       }
-      Text { text: "retroarch + the snes9x core. tap play on a game: the game shows centred on a portrait handheld with touch controls below it."; style: small; color: muted; maxLines: 3 }
+      Text { text: "retroarch + the snes9x core. tap play on a game: the game shows on a portrait handheld with touch controls below it."; style: small; color: muted; maxLines: 3 }
 
       if count == 0 {
         Text { text: "no games found. add some below."; style: small; color: muted; maxLines: 3 }

@@ -389,8 +389,8 @@ ACCENT = (232, 88, 88, 255)
 
 # kind -> core aspect (width / height) and label
 LAYOUTS = {
-    "snes": {"aspect": 4 / 3, "label": "SUPER NES", "accent": ACCENT, "shift": 50},
-    "gba": {"aspect": 240 / 160, "label": "GAME BOY ADVANCE", "accent": (120, 92, 220, 255), "shift": 50},
+    "snes": {"aspect": 4 / 3, "label": "SUPER NES", "accent": ACCENT},
+    "gba": {"aspect": 240 / 160, "label": "GAME BOY ADVANCE", "accent": (120, 92, 220, 255)},
 }
 
 
@@ -409,21 +409,15 @@ def controls(kind):
     Positions are pixels of the 1080x2228 overlay image (== the framebuffer).
     '''
     aspect = LAYOUTS[kind]["aspect"]
-    shift = LAYOUTS[kind].get("shift", 0)
     hole_h = int(round(W / aspect))
-    # Raise the game window `shift` px so its bottom clears the L/R row;
-    # tools/play moves the game to match via a custom viewport.
-    y0 = (H - hole_h) // 2 - shift
+    y0 = (H - hole_h) // 2
     y1 = y0 + hole_h
-    # Buttons keep the position a centred window used to give them, so raising
-    # the window opens a gap instead of dragging the controls up with it.
-    ctl_y1 = (H + hole_h) // 2
-    mid = (ctl_y1 + H) // 2
+    mid = (y1 + H) // 2
     c = {
         "hole": (0, y0, W, y1),
         "dpad": (250, mid, 200, 76),  # cx, cy, s, bar
-        "l": (190, ctl_y1 + 70, 240, 116),  # cx, cy, w, h
-        "r": (890, ctl_y1 + 70, 240, 116),
+        "l": (190, y1 + 70, 240, 116),  # cx, cy, w, h
+        "r": (890, y1 + 70, 240, 116),
         "select": (370, H - 86, 250, 104),
         "start": (710, H - 86, 250, 104),
     }

@@ -68,17 +68,27 @@ with Android's own picker (it can browse internal storage), and they land in the
 destination folder. The guest shares the phone's loopback, so this crosses the
 sandbox without adb, a server app, or the internet.
 
+The loopback is shared with every other app, so the server also defends itself:
+it mints a random token per run, only answers / and /upload when the link carries
+it, and stops after a spell with no request.
+
 Config (environment):
-  ROMUPLOAD_DEST   where uploads are saved   (default ~/roms/snes)
-  ROMUPLOAD_PORT   TCP port to listen on     (default 8123)
-  ROMUPLOAD_BIND   address to bind           (default 127.0.0.1)
-  ROMUPLOAD_TITLE  heading on the page       (default "add game files to Linux")
+  ROMUPLOAD_DEST        where uploads are saved   (default ~/roms/snes)
+  ROMUPLOAD_PORT        TCP port to listen on     (default 8123)
+  ROMUPLOAD_BIND        address to bind           (default 127.0.0.1)
+  ROMUPLOAD_TITLE       heading on the page       (default "add game files to Linux")
+  ROMUPLOAD_TOKEN       fixed access token        (default: random, one per run)
+  ROMUPLOAD_TOKEN_FILE  write the token here      (default: none)
+  ROMUPLOAD_IDLE        stop after this many idle seconds (default 900, 0 = never)
 '''
+import hmac
 import http.server
 import os
+import secrets
 import signal
-import socket
 import sys
+import threading
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -86,6 +96,17 @@ DEST = Path(os.environ.get("ROMUPLOAD_DEST") or "~/roms/snes").expanduser()
 PORT = int(os.environ.get("ROMUPLOAD_PORT", "8123"))
 BIND = os.environ.get("ROMUPLOAD_BIND", "127.0.0.1")
 TITLE = os.environ.get("ROMUPLOAD_TITLE", "add game files to Linux")
+TOKEN = os.environ.get("ROMUPLOAD_TOKEN") or secrets.token_urlsafe(16)
+TOKEN_FILE = os.environ.get("ROMUPLOAD_TOKEN_FILE")
+IDLE = int(os.environ.get("ROMUPLOAD_IDLE", "900"))
+
+_last = time.monotonic()
+
+
+def touch():
+    global _last
+    _last = time.monotonic()
+
 
 PAGE = '''<!doctype html>
 <html><head><meta charset="utf-8">
@@ -108,6 +129,7 @@ PAGE = '''<!doctype html>
 <input id="f" type="file" multiple>
 <ul id="list"></ul>
 <script>
+const token = new URLSearchParams(location.search).get('t') || '';
 const list = document.getElementById('list');
 document.getElementById('f').onchange = async (e) => {{
   for (const file of e.target.files) {{
@@ -116,7 +138,7 @@ document.getElementById('f').onchange = async (e) => {{
     li.textContent = file.name + ' \u2014 uploading\u2026';
     list.append(li);
     try {{
-      const r = await fetch('/upload?name=' + encodeURIComponent(file.name), {{method:'POST', body:file}});
+      const r = await fetch('/upload?t=' + encodeURIComponent(token) + '&name=' + encodeURIComponent(file.name), {{method:'POST', body:file}});
       const t = await r.text();
       li.className = r.ok ? 'ok' : 'err';
       li.textContent = file.name + ' \u2014 ' + t;
@@ -156,10 +178,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorized(self, query: str) -> bool:
+        given = (urllib.parse.parse_qs(query).get("t") or [""])[0]
+        return hmac.compare_digest(given, TOKEN)
+
+    def _forbidden(self):
+        self._send(403, b"forbidden: open the link the widget gave you, and don't share it")
+
     def do_GET(self):
-        if urllib.parse.urlparse(self.path).path != "/":
+        u = urllib.parse.urlparse(self.path)
+        if u.path != "/":
             self._send(404, b"not found")
             return
+        if not self._authorized(u.query):
+            self._forbidden()
+            return
+        touch()
         existing = len([p for p in DEST.iterdir() if p.is_file()]) if DEST.is_dir() else 0
         self._send(200, PAGE.format(title=TITLE, dest=DEST, existing=existing).encode(), "text/html; charset=utf-8")
 
@@ -168,6 +202,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if u.path != "/upload":
             self._send(404, b"not found")
             return
+        if not self._authorized(u.query):
+            self._forbidden()
+            return
+        touch()
         name = (urllib.parse.parse_qs(u.query).get("name") or [""])[0]
         total = int(self.headers.get("Content-Length") or 0)
         target = unique(name)
@@ -187,24 +225,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     DEST.mkdir(parents=True, exist_ok=True)
-    server = http.server.ThreadingHTTPServer((BIND, PORT), Handler)
+    try:
+        server = http.server.ThreadingHTTPServer((BIND, PORT), Handler)
+    except OSError as e:
+        print(f"can't listen on {BIND}:{PORT}: {e}", file=sys.stderr, flush=True)
+        return 1
+
     pid = Path(f"/tmp/romupload-{PORT}.pid")
     pid.write_text(str(os.getpid()))
-    print(f"serving on http://{BIND}:{PORT}/  ->  {DEST}", flush=True)
+    token_path = Path(TOKEN_FILE).expanduser() if TOKEN_FILE else None
+    if token_path:
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = token_path.with_name(token_path.name + ".tmp")
+        tmp.write_text(TOKEN)
+        os.chmod(tmp, 0o600)
+        tmp.replace(token_path)
+    print(f"serving on http://{BIND}:{PORT}/?t={TOKEN}  ->  {DEST}", flush=True)
+
+    def watchdog():
+        while True:
+            time.sleep(min(IDLE, 30))
+            if time.monotonic() - _last > IDLE:
+                print(f"no request for {IDLE}s, stopping", flush=True)
+                server.shutdown()
+                return
 
     def stop(*_):
-        try:
-            pid.unlink()
-        except OSError:
-            pass
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    if IDLE > 0:
+        threading.Thread(target=watchdog, daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("stopped", flush=True)
+        pass
+    finally:
+        server.server_close()
+        for f in (pid, token_path):
+            if f is not None:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+    print("stopped", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
@@ -629,7 +695,14 @@ chmod +x "$d/handheldgen.tmp"; mv -f "$d/handheldgen.tmp" "$d/handheldgen"; fi
 
       // Add games from the phone: the browser picker can browse Internal storage.
       Text { text: "add games"; style: label; color: accent; padding: [0, 10, 0, 0] }
-      Button { text: "pick files in the browser"; color: accent; onTap: run("""curl -sf -o /dev/null --max-time 1 http://127.0.0.1:8123/ || (ROMUPLOAD_DEST="$HOME/roms/snes" ROMUPLOAD_PORT=8123 ROMUPLOAD_TITLE='add SNES games' setsid "$HOME/.cache/owl-snes/tools/romupload" >"$HOME/.cache/owl-snes/romupload.log" 2>&1 & sleep 3); xdg-open http://127.0.0.1:8123/""") }
+      Button { text: "pick files in the browser"; color: accent; onTap: run("""url=http://127.0.0.1:8123
+tok="$HOME/.cache/owl-snes/romupload-token"
+if ! curl -s -o /dev/null --max-time 1 "$url/"; then
+  ROMUPLOAD_DEST="$HOME/roms/snes" ROMUPLOAD_PORT=8123 ROMUPLOAD_TITLE='add SNES games' ROMUPLOAD_TOKEN_FILE="$tok" setsid "$HOME/.cache/owl-snes/tools/romupload" >"$HOME/.cache/owl-snes/romupload.log" 2>&1 &
+  n=0; until [ -s "$tok" ] || [ "$n" -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+fi
+xdg-open "$url/?t=$(cat "$tok" 2>/dev/null)"
+""") }
       Text { text: "the phone's file picker can browse Internal storage; pick .sfc/.smc files."; style: small; color: muted; maxLines: 3 }
       Text { text: "or download from a link"; style: small; color: muted; padding: [0, 6, 0, 0] }
       Row {

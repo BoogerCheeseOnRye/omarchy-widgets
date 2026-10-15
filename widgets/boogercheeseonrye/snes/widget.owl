@@ -419,9 +419,8 @@ def controls(kind):
     '''
     aspect = LAYOUTS[kind]["aspect"]
     hole_h = int(round(W / aspect))
-    # Move game window higher up: centre it in the top quarter band.
-    top_band = H // 4
-    y0 = top_band - hole_h // 2
+    # Move game window higher up; try aligning top to screen top.
+    y0 = 0
     y1 = y0 + hole_h
     ctl_y1 = (H + hole_h) // 2
     mid = (ctl_y1 + H) // 2

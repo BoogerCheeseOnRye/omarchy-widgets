@@ -301,11 +301,7 @@ esac
 
 ast="$(dirname "$here")/assets/handheld"
 ovl="$ast/$kind.overlay.cfg"
-vp="$ast/$kind.viewport"
-[ -f "$ovl" ] && [ -f "$vp" ] || python3 "$here/handheldgen" "$kind" >/dev/null
-# handheldgen writes the game window's pixel geometry (vp_y, vp_h); the game
-# must sit exactly in the overlay's transparent hole.
-. "$vp"
+[ -f "$ovl" ] || python3 "$here/handheldgen" "$kind" >/dev/null
 
 # The Linux game window is 540x1114 logical pixels (1080x2228 at the
 # compositor's wl_output scale 2; the system bars take the rest of the
@@ -325,16 +321,9 @@ pause_nonactive = "false"
 video_fullscreen = "true"
 video_fullscreen_x = "$FS_W"
 video_fullscreen_y = "$FS_H"
-# Pin the game to the overlay's transparent hole (a full-width band at the top)
-# with a custom viewport, so the game never drifts from the printed shell.
-# The hole in the overlay image is in framebuffer pixels (1080x2228), but the
-# game window is 540x1114 logical (framebuffer /2), and custom_viewport_* is
-# measured in the window's logical pixels, so halve the hole.
-aspect_ratio_index = "23"
-custom_viewport_width = "$FS_W"
-custom_viewport_height = "$((vp_h / 2))"
-custom_viewport_x = "0"
-custom_viewport_y = "$((vp_y / 2))"
+# RetroArch draws the game at its core aspect, centred in the window. The
+# overlay's transparent hole is drawn around exactly that frame (handheldgen),
+# so no custom viewport is needed and the game can't drift from the shell.
 input_overlay_enable = "true"
 input_overlay = "$ovl"
 input_overlay_opacity = "1.0"
@@ -364,9 +353,9 @@ video_fullscreen_x/y to that logical size, so RetroArch's framebuffer is
 1080x2228 and this overlay, stretched full-screen by overlay0_full_screen, maps
 1:1 onto it.
 
-tools/play pins the game to the transparent hole with a custom viewport, so the
-hole is a full-width band at the top of the screen, the brand sits in the strip
-below it, and the touch controls sit in the strip at the bottom.
+tools/play lets RetroArch centre the game at its core aspect; the transparent
+hole is drawn around exactly that frame, with the brand above it and the touch
+controls below.
 
 Usage: handheldgen <snes|gba>
 Writes assets/handheld/<kind>.png and <kind>.overlay.cfg inside this widget's cache dir.
@@ -414,11 +403,11 @@ def controls(kind):
     '''
     aspect = LAYOUTS[kind]["aspect"]
     hole_h = int(round(W / aspect))
-    # Game window sits at the top of the screen; tools/play pins it here with a
-    # custom viewport. Brand and speaker dots go in the strip below it.
-    y0 = 0
+    # RetroArch centres the core-aspect game in the window, so the hole is drawn
+    # centred around it: brand above, touch controls below.
+    y0 = (H - hole_h) // 2
     y1 = y0 + hole_h
-    ctl_y1 = (H + hole_h) // 2
+    ctl_y1 = y1
     mid = (ctl_y1 + H) // 2
     c = {
         "hole": (0, y0, W, y1),
@@ -525,13 +514,13 @@ def build(kind):
     draw.rectangle((x0 - 10, y0 - 40, x1 + 10, y0), fill=BEZEL)
     draw.rectangle((x0 - 10, y1, x1 + 10, y1 + 40), fill=BEZEL)
 
-    # brand and speaker dots in the strip below the game window
+    # brand and speaker dots in the strip above the game window
     f = font(46)
     label = spec["label"]
     bb = draw.textbbox((0, 0), label, font=f)
-    brand_y = y1 + 90
+    brand_y = y0 - 250
     draw.text(((W - (bb[2] - bb[0])) / 2 - bb[0], brand_y), label, font=f, fill=DIM)
-    dots_y = y1 + 210
+    dots_y = y0 - 120
     for i in range(-3, 4):
         draw.ellipse((W / 2 + i * 34 - 7, dots_y - 7, W / 2 + i * 34 + 7, dots_y + 7), fill=BODY_HI)
 
@@ -575,12 +564,7 @@ def write(kind):
         fh.write(f"overlay0_descs = {n}\n")
         for k, v in descs:
             fh.write(f"overlay0_{k} = {v}\n")
-    x0, y0, x1, y1 = hole
-    vp = os.path.join(OUT, f"{kind}.viewport")
-    with open(vp, "w") as fh:
-        fh.write("# game-window pixel geometry for tools/play (framebuffer space)\n")
-        fh.write(f"vp_y={y0}\nvp_h={y1 - y0}\n")
-    print(f"{kind}: {png} ({img.size[0]}x{img.size[1]}), hole {hole}, {n} controls, viewport y={y0} h={y1 - y0}")
+    print(f"{kind}: {png} ({img.size[0]}x{img.size[1]}), hole {hole}, {n} controls")
 
 
 if __name__ == "__main__":

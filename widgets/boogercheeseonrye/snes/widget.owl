@@ -410,7 +410,9 @@ def controls(kind):
     '''
     aspect = LAYOUTS[kind]["aspect"]
     hole_h = int(round(W / aspect))
-    y0 = (H - hole_h) // 2
+    # Move game window to top centre (upper half of the screen) so the
+    # bottom edge is well above the button row; keep controls anchored as-is.
+    y0 = (H // 2 - hole_h) // 2
     y1 = y0 + hole_h
     mid = (y1 + H) // 2
     c = {

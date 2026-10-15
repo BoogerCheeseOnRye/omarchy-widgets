@@ -333,7 +333,7 @@ custom_viewport_x = "0"
 custom_viewport_y = "$vp_y"
 # Fit the core output to the custom viewport without stretching outside its bounds.
 video_scale_integer = "false"
-video_crop_overscan = "false"
+video_crop_overscan = "true"
 video_fullscreen = "true"
 video_fullscreen_x = "$FS_W"
 video_fullscreen_y = "$FS_H"
